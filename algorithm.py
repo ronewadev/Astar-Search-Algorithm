@@ -1,202 +1,120 @@
-# -*- coding: utf-8 -*-
-""" generic A-Star path searching algorithm """
+class Node():
+    """A node class for A* Pathfinding"""
 
-from abc import ABC, abstractmethod
-from typing import Callable, Dict, Iterable, Union, TypeVar, Generic
-from math import inf as infinity
-import sortedcontainers  # type: ignore
+    def __init__(self, parent=None, position=None):
+        self.parent = parent
+        self.position = position
 
-# introduce generic type
-T = TypeVar("T")
+        self.g = 0
+        self.h = 0
+        self.f = 0
 
-
-################################################################################
-class SearchNode(Generic[T]):
-    """Representation of a search node"""
-
-    __slots__ = ("data", "gscore", "fscore", "closed", "came_from", "in_openset")
-
-    def __init__(
-        self, data: T, gscore: float = infinity, fscore: float = infinity
-    ) -> None:
-        self.data = data
-        self.gscore = gscore
-        self.fscore = fscore
-        self.closed = False
-        self.in_openset = False
-        self.came_from: Union[None, SearchNode[T]] = None
-
-    def __lt__(self, b: "SearchNode[T]") -> bool:
-        """Natural order is based on the fscore value & is used by heapq operations"""
-        return self.fscore < b.fscore
+    def __eq__(self, other):
+        return self.position == other.position
 
 
-################################################################################
-class SearchNodeDict(Dict[T, SearchNode[T]]):
-    """A dict that returns a new SearchNode when a key is missing"""
+def astar(maze, start, end):
+    """Returns a list of tuples as a path from the given start to the given end in the given maze"""
 
-    def __missing__(self, k) -> SearchNode[T]:
-        v = SearchNode(k)
-        self.__setitem__(k, v)
-        return v
+    # Create start and end node
+    start_node = Node(None, start)
+    start_node.g = start_node.h = start_node.f = 0
+    end_node = Node(None, end)
+    end_node.g = end_node.h = end_node.f = 0
 
+    # Initialize both open and closed list
+    open_list = []
+    closed_list = []
 
-################################################################################
-SNType = TypeVar("SNType", bound=SearchNode)
+    # Add the start node
+    open_list.append(start_node)
 
+    # Loop until you find the end
+    while len(open_list) > 0:
 
-class OpenSet(Generic[SNType]):
-    def __init__(self) -> None:
-        self.sortedlist = sortedcontainers.SortedList(key=lambda x: x.fscore)
+        # Get the current node
+        current_node = open_list[0]
+        current_index = 0
+        for index, item in enumerate(open_list):
+            if item.f < current_node.f:
+                current_node = item
+                current_index = index
 
-    def push(self, item: SNType) -> None:
-        item.in_openset = True
-        self.sortedlist.add(item)
+        # Pop current off open list, add to closed list
+        open_list.pop(current_index)
+        closed_list.append(current_node)
 
-    def pop(self) -> SNType:
-        item = self.sortedlist.pop(0)
-        item.in_openset = False
-        return item
+        # Found the goal
+        if current_node == end_node:
+            path = []
+            current = current_node
+            while current is not None:
+                path.append(current.position)
+                current = current.parent
+            return path[::-1] # Return reversed path
 
-    def remove(self, item: SNType) -> None:
-        self.sortedlist.remove(item)
-        item.in_openset = False
+        # Generate children
+        children = []
+        for new_position in [(0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (-1, 1), (1, -1), (1, 1)]: # Adjacent squares
 
-    def __len__(self) -> int:
-        return len(self.sortedlist)
+            # Get node position
+            node_position = (current_node.position[0] + new_position[0], current_node.position[1] + new_position[1])
 
+            # Make sure within range
+            if node_position[0] > (len(maze) - 1) or node_position[0] < 0 or node_position[1] > (len(maze[len(maze)-1]) -1) or node_position[1] < 0:
+                continue
 
-################################################################################*
+            # Make sure walkable terrain
+            if maze[node_position[0]][node_position[1]] != 0:
+                continue
 
+            # Create new node
+            new_node = Node(current_node, node_position)
 
-class AStar(ABC, Generic[T]):
-    __slots__ = ()
+            # Append
+            children.append(new_node)
 
-    @abstractmethod
-    def heuristic_cost_estimate(self, current: T, goal: T) -> float:
-        """
-        Computes the estimated (rough) distance between a node and the goal.
-        The second parameter is always the goal.
-        This method must be implemented in a subclass.
-        """
-        raise NotImplementedError
+        # Loop through children
+        for child in children:
 
-    @abstractmethod
-    def distance_between(self, n1: T, n2: T) -> float:
-        """
-        Gives the real distance between two adjacent nodes n1 and n2 (i.e n2
-        belongs to the list of n1's neighbors).
-        n2 is guaranteed to belong to the list returned by the call to neighbors(n1).
-        This method must be implemented in a subclass.
-        """
-
-    @abstractmethod
-    def neighbors(self, node: T) -> Iterable[T]:
-        """
-        For a given node, returns (or yields) the list of its neighbors.
-        This method must be implemented in a subclass.
-        """
-        raise NotImplementedError
-
-    def is_goal_reached(self, current: T, goal: T) -> bool:
-        """
-        Returns true when we can consider that 'current' is the goal.
-        The default implementation simply compares `current == goal`, but this
-        method can be overwritten in a subclass to provide more refined checks.
-        """
-        return current == goal
-
-    def reconstruct_path(self, last: SearchNode, reversePath=False) -> Iterable[T]:
-        def _gen():
-            current = last
-            while current:
-                yield current.data
-                current = current.came_from
-
-        if reversePath:
-            return _gen()
-        else:
-            return reversed(list(_gen()))
-
-    def astar(
-        self, start: T, goal: T, reversePath: bool = False
-    ) -> Union[Iterable[T], None]:
-        if self.is_goal_reached(start, goal):
-            return [start]
-
-        openSet: OpenSet[SearchNode[T]] = OpenSet()
-        searchNodes: SearchNodeDict[T] = SearchNodeDict()
-        startNode = searchNodes[start] = SearchNode(
-            start, gscore=0.0, fscore=self.heuristic_cost_estimate(start, goal)
-        )
-        openSet.push(startNode)
-
-        while openSet:
-            current = openSet.pop()
-
-            if self.is_goal_reached(current.data, goal):
-                return self.reconstruct_path(current, reversePath)
-
-            current.closed = True
-
-            for neighbor in map(lambda n: searchNodes[n], self.neighbors(current.data)):
-                if neighbor.closed:
+            # Child is on the closed list
+            for closed_child in closed_list:
+                if child == closed_child:
                     continue
 
-                tentative_gscore = current.gscore + self.distance_between(
-                    current.data, neighbor.data
-                )
+            # Create the f, g, and h values
+            child.g = current_node.g + 1
+            child.h = ((child.position[0] - end_node.position[0]) ** 2) + ((child.position[1] - end_node.position[1]) ** 2)
+            child.f = child.g + child.h
 
-                if tentative_gscore >= neighbor.gscore:
+            # Child is already in the open list
+            for open_node in open_list:
+                if child == open_node and child.g > open_node.g:
                     continue
 
-                neighbor_from_openset = neighbor.in_openset
-
-                if neighbor_from_openset:
-                    # we have to remove the item from the heap, as its score has changed
-                    openSet.remove(neighbor)
-
-                # update the node
-                neighbor.came_from = current
-                neighbor.gscore = tentative_gscore
-                neighbor.fscore = tentative_gscore + self.heuristic_cost_estimate(
-                    neighbor.data, goal
-                )
-
-                openSet.push(neighbor)
-
-        return None
+            # Add the child to the open list
+            open_list.append(child)
 
 
-################################################################################
-U = TypeVar("U")
+def main():
+
+    maze = [[0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+
+    start = (0, 0)
+    end = (7, 6)
+
+    path = astar(maze, start, end)
+    print(path)
 
 
-def find_path(
-    start: U,
-    goal: U,
-    neighbors_fnct: Callable[[U], Iterable[U]],
-    reversePath=False,
-    heuristic_cost_estimate_fnct: Callable[[U, U], float] = lambda a, b: infinity,
-    distance_between_fnct: Callable[[U, U], float] = lambda a, b: 1.0,
-    is_goal_reached_fnct: Callable[[U, U], bool] = lambda a, b: a == b,
-) -> Union[Iterable[U], None]:
-    """A non-class version of the path finding algorithm"""
-
-    class FindPath(AStar):
-        def heuristic_cost_estimate(self, current: U, goal: U) -> float:
-            return heuristic_cost_estimate_fnct(current, goal)  # type: ignore
-
-        def distance_between(self, n1: U, n2: U) -> float:
-            return distance_between_fnct(n1, n2)
-
-        def neighbors(self, node) -> Iterable[U]:
-            return neighbors_fnct(node)  # type: ignore
-
-        def is_goal_reached(self, current: U, goal: U) -> bool:
-            return is_goal_reached_fnct(current, goal)
-
-    return FindPath().astar(start, goal, reversePath)
-
-
-__all__ = ["AStar", "find_path"]
+if __name__ == '__main__':
+    main()
